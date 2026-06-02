@@ -209,8 +209,8 @@ def extract_features(z_real_list, z_imag_list):
 @st.cache_resource
 def train_model_from_dib():
     """
-    data/EIS_Test.zip 또는 data/EIS_Test/ 폴더에서 Warwick DIB 360개 파일 학습
-    zip 파일 우선 → 없으면 폴더 탐색
+    EIS_Test.zip 또는 data/EIS_Test/ 폴더에서 Warwick DIB 360개 파일 학습
+    zip 파일 우선 → 없으면 폴더 탐색 → 루트 레벨 zip 확인
     
     개선사항:
     - 15개 피처 사용 (기존 6개 → 9개 추가)
@@ -222,19 +222,32 @@ def train_model_from_dib():
     import zipfile, tempfile
 
     base_dir  = os.path.dirname(__file__)
-    zip_path  = os.path.join(base_dir, 'data', 'EIS_Test.zip')
+    
+    # 경로 순서: data/EIS_Test.zip → data/EIS_Test/ → EIS_Test.zip (루트)
+    zip_path_data = os.path.join(base_dir, 'data', 'EIS_Test.zip')
+    zip_path_root = os.path.join(base_dir, 'EIS_Test.zip')
     dir_path  = os.path.join(base_dir, 'data', 'EIS_Test')
 
     # xls 파일 목록 수집
     file_items = []
 
-    if os.path.exists(zip_path):
-        # zip 파일에서 직접 읽기
-        with zipfile.ZipFile(zip_path, 'r') as zf:
+    # 1순위: data/EIS_Test.zip
+    if os.path.exists(zip_path_data):
+        with zipfile.ZipFile(zip_path_data, 'r') as zf:
             for zname in zf.namelist():
                 fname = os.path.basename(zname)
                 if fname.endswith('.xls') and 'SOH' in fname:
                     file_items.append((fname, zf.read(zname)))
+    
+    # 2순위: 루트 EIS_Test.zip
+    elif os.path.exists(zip_path_root):
+        with zipfile.ZipFile(zip_path_root, 'r') as zf:
+            for zname in zf.namelist():
+                fname = os.path.basename(zname)
+                if fname.endswith('.xls') and 'SOH' in fname:
+                    file_items.append((fname, zf.read(zname)))
+    
+    # 3순위: data/EIS_Test/ 폴더
     elif os.path.exists(dir_path):
         for fname in os.listdir(dir_path):
             if fname.endswith('.xls') and 'SOH' in fname:
