@@ -107,24 +107,42 @@ def extract_features(z_real_list, z_imag_list):
 @st.cache_resource
 def train_model_from_dib():
     """
-    data/EIS_Test/ 폴더의 Warwick DIB 360개 파일로 GBR 모델 학습
-    파일명 형식: Cell{N}_{SOH}SOH_{temp}degC_{SOC}SOC_{cycle}.xls
+    data/EIS_Test.zip 또는 data/EIS_Test/ 폴더에서 Warwick DIB 360개 파일 학습
+    zip 파일 우선 → 없으면 폴더 탐색
     출처: Rashid et al. (2023), doi:10.1016/j.dib.2023.109157
     """
-    data_dir = os.path.join(os.path.dirname(__file__), 'data', 'EIS_Test')
-    if not os.path.exists(data_dir):
+    import zipfile, tempfile
+
+    base_dir  = os.path.dirname(__file__)
+    zip_path  = os.path.join(base_dir, 'data', 'EIS_Test.zip')
+    dir_path  = os.path.join(base_dir, 'data', 'EIS_Test')
+
+    # xls 파일 목록 수집
+    file_items = []  # (fname, filepath_or_bytes)
+
+    if os.path.exists(zip_path):
+        # zip 파일에서 직접 읽기 (압축 풀기 없이)
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            for zname in zf.namelist():
+                fname = os.path.basename(zname)
+                if fname.endswith('.xls') and 'SOH' in fname:
+                    file_items.append((fname, zf.read(zname)))
+    elif os.path.exists(dir_path):
+        for fname in os.listdir(dir_path):
+            if fname.endswith('.xls') and 'SOH' in fname:
+                file_items.append((fname, os.path.join(dir_path, fname)))
+    else:
         return None, None, 0
 
     X, y = [], []
-    for fname in os.listdir(data_dir):
-        if not fname.endswith('.xls'):
-            continue
+    for fname, file_data in file_items:
         m = re.search(r'(\d+)SOH', fname)
         if not m:
             continue
         soh = int(m.group(1))
         try:
-            zr, zi = parse_xls_eis(os.path.join(data_dir, fname))
+            raw = file_data if isinstance(file_data, bytes) else None
+            zr, zi = parse_xls_eis(raw if raw else file_data)
             feats = extract_features(zr, zi)
             if feats:
                 X.append(feats)
