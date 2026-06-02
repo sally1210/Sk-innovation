@@ -436,12 +436,24 @@ if uploaded_files:
         i3.metric("경제적 가치", f"{recs[0]['value']}만원", "재사용 가치")
         i4.metric("광물 절약",   f"{round(soh_pred*0.05,1)}kg", "리튬·코발트")
 
-        # 최종 판단
+        # 최종 판단 (안전성 평가와 연동)
         st.divider()
-        reusable = soh_pred >= props['soh_threshold']
-        color = "#00d4aa" if reusable else "#e05555"
-        msg   = "✅ 재사용 가능" if reusable else "❌ 재활용 공정 권장"
         cycle_pct = round(cycles / props['cycle_life'] * 100)
+
+        if safety_txt == "위험":
+            color = "#e05555"
+            msg   = "❌ 재사용 불가 — 재활용 공정 필요"
+        elif safety_txt == "주의":
+            color = "#f0a500"
+            msg   = "⚠️ 조건부 재사용 가능 — 주기적 점검 필요"
+        else:  # 안전
+            if soh_pred >= props['soh_threshold']:
+                color = "#00d4aa"
+                msg   = "✅ 재사용 가능"
+            else:
+                color = "#e05555"
+                msg   = "❌ 재활용 공정 권장 — SOH 기준 미달"
+
         st.markdown(f"""
         <div style="background:#1a1a2e; border-radius:12px; padding:20px;
                     border:2px solid {color}; text-align:center;">
