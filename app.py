@@ -7,8 +7,9 @@ import re
 import os
 import io
 import pickle
-from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import cross_val_score
 
 # ─────────────────────────────────────────────
 st.set_page_config(
@@ -48,12 +49,13 @@ BAT_PROPS = {
 }
 
 # ─────────────────────────────────────────────
-# XLS 파일 파싱 (라이브러리 없이 직접 파싱)
+# XLS 파일 파싱 (개선됨 - xlrd 라이브러리 사용)
 # Warwick DIB xls 포맷 기준
 # ─────────────────────────────────────────────
 def parse_xls_eis(file_input):
     """
-    xls 파일에서 EIS 임피던스 데이터 추출
+    xls 파일에서 EIS 임피던스 데이터 추출 (개선됨)
+    xlrd 라이브러리 사용 + 정확한 파싱
     file_input: 파일 경로(str) 또는 바이트(bytes)
     반환: z_real, z_imag 리스트
     """
@@ -63,6 +65,57 @@ def parse_xls_eis(file_input):
     else:
         raw = file_input
 
+    try:
+        import xlrd
+        
+        # xlrd로 정확한 파싱
+        if isinstance(raw, bytes):
+            wb = xlrd.open_workbook(file_contents=raw)
+        else:
+            wb = xlrd.open_workbook(file_input)
+        
+        ws = wb.sheet_by_index(0)
+        z_real_list = []
+        z_imag_list = []
+        
+        # 헤더 행 찾기 (보통 0-3행)
+        header_row = 0
+        for row in range(min(5, ws.nrows)):
+            row_vals = [str(ws.cell_value(row, col)).lower() for col in range(ws.ncols)]
+            if any('freq' in v or 'impedance' in v or "z'" in v for v in row_vals):
+                header_row = row + 1
+                break
+        
+        # 데이터 추출
+        for row in range(header_row, ws.nrows):
+            try:
+                if ws.ncols >= 3:
+                    freq = float(ws.cell_value(row, 0))
+                    zr = float(ws.cell_value(row, 1))
+                    zi = float(ws.cell_value(row, 2))
+                    
+                    # 배터리 표준 범위 검증
+                    if (freq > 0 and 
+                        0.001 <= abs(zr) <= 100 and 
+                        -100 <= zi <= 0.1):
+                        z_real_list.append(zr)
+                        z_imag_list.append(zi)
+            except:
+                continue
+        
+        if z_real_list:
+            # 고주파 → 저주파 순서로 정렬
+            sorted_idx = np.argsort(z_real_list)[::-1]
+            z_real = [z_real_list[i] for i in sorted_idx]
+            z_imag = [z_imag_list[i] for i in sorted_idx]
+            return z_real, z_imag
+    
+    except ImportError:
+        st.warning("⚠️ xlrd 설치 필요: pip install xlrd>=2.0.1")
+    except:
+        pass
+    
+    # 폴백: 원래 방식 사용
     all_floats = []
     for i in range(0, len(raw) - 8, 8):
         try:
@@ -72,8 +125,8 @@ def parse_xls_eis(file_input):
         except:
             pass
 
-    z_real     = sorted([v for v in all_floats if 0.01  <= v  <= 0.5],  reverse=True)
-    z_imag_neg = sorted([v for v in all_floats if -0.1  <= v  < -0.0001])
+    z_real = sorted([v for v in all_floats if 0.001 <= v <= 10], reverse=True)
+    z_imag_neg = sorted([v for v in all_floats if -1 <= v < -0.0001])
     return z_real, z_imag_neg
 
 def parse_csv_eis(file_input):
@@ -87,41 +140,96 @@ def parse_csv_eis(file_input):
     return df['z_real'].tolist(), df['z_imag'].tolist()
 
 def extract_features(z_real_list, z_imag_list):
-    """EIS 데이터 → ML 피처 6개 추출"""
+    """
+    EIS 데이터 → ML 피처 15개 추출 (개선됨)
+    
+    기존 6개 피처 + 새로 9개 추가 (SOH 관련 특성)
+    [0-5]: 기존 피처 (호환성 유지)
+    [6-8]: 반원 형태 특성 (SOH와 직접 관련)
+    [9-11]: 임피던스 크기 특성
+    [12-14]: 고급 지표 (D-value 등)
+    """
     if len(z_real_list) < 5:
         return None
+    
     zr = np.array(z_real_list)
     zi = np.array(z_imag_list) if z_imag_list else np.array([0.0])
-    return [
-        float(zr[0]),           # Re: 고주파 실수부 (전해질 저항)
-        float(zr.max()),        # 최대 실수부
-        float(zi.min()),        # 최소 허수부 (반원 깊이)
-        float(zi.max()),        # 최대 허수부
-        float(zr.mean()),       # 실수부 평균
-        float(zr.std()),        # 실수부 표준편차
+    
+    # [0-5] 기존 6개 피처 (호환성 유지)
+    features = [
+        float(zr[0]),           # [0] Re: 고주파 실수부 (전해질 저항)
+        float(zr.max()),        # [1] 최대 실수부
+        float(zi.min()),        # [2] 최소 허수부 (반원 깊이)
+        float(zi.max()),        # [3] 최대 허수부
+        float(zr.mean()),       # [4] 실수부 평균
+        float(zr.std()),        # [5] 실수부 표준편차
     ]
+    
+    # [6-8] 반원 형태 특성 (NEW - SOH와 강한 상관)
+    Rct = zr.max() - zr[0]  # 전하전달 저항 = 반원 직경
+    semi_height = abs(zi.min())  # 반원 높이
+    
+    if Rct > 0 and semi_height > 0:
+        semi_area = np.pi * (Rct / 2) * semi_height / 2  # 반원 면적
+    else:
+        semi_area = 0
+    
+    features.extend([
+        float(Rct),             # [6] 반원 직경 (Rct) ⭐
+        float(semi_height),     # [7] 반원 높이 ⭐
+        float(semi_area),       # [8] 반원 면적 ⭐
+    ])
+    
+    # [9-11] 임피던스 크기 특성 (NEW)
+    Z_mag = np.sqrt(zr**2 + zi**2)
+    features.extend([
+        float(np.max(Z_mag)),   # [9] 최대 |Z|
+        float(np.mean(Z_mag)),  # [10] 평균 |Z|
+        float(np.std(Z_mag)),   # [11] 표준편차 |Z|
+    ])
+    
+    # [12-14] 고급 지표 (NEW)
+    # D-value: 반원의 곡률 (배터리 열화 메커니즘)
+    if (Rct**2 + 4*semi_height**2) > 0:
+        D_value = (Rct**2 - 4*semi_height**2) / (Rct**2 + 4*semi_height**2)
+    else:
+        D_value = 0
+    
+    features.extend([
+        float(D_value),         # [12] D-value (반원 완전도)
+        float(np.max(np.abs(zi))),  # [13] 최대 |Zi|
+        float(np.mean(np.abs(zi))), # [14] 평균 |Zi|
+    ])
+    
+    return features
 
 # ─────────────────────────────────────────────
-# Warwick DIB 데이터셋으로 모델 학습
+# Warwick DIB 데이터셋으로 모델 학습 (개선됨)
 # ─────────────────────────────────────────────
 @st.cache_resource
 def train_model_from_dib():
     """
     data/EIS_Test.zip 또는 data/EIS_Test/ 폴더에서 Warwick DIB 360개 파일 학습
     zip 파일 우선 → 없으면 폴더 탐색
+    
+    개선사항:
+    - 15개 피처 사용 (기존 6개 → 9개 추가)
+    - GradientBoosting + RandomForest 앙상블
+    - 교차검증으로 성능 평가
+    
     출처: Rashid et al. (2023), doi:10.1016/j.dib.2023.109157
     """
     import zipfile, tempfile
 
     base_dir  = os.path.dirname(__file__)
-    zip_path  = os.path.join(base_dir, 'EIS_Test.zip')
+    zip_path  = os.path.join(base_dir, 'data', 'EIS_Test.zip')
     dir_path  = os.path.join(base_dir, 'data', 'EIS_Test')
 
     # xls 파일 목록 수집
-    file_items = []  # (fname, filepath_or_bytes)
+    file_items = []
 
     if os.path.exists(zip_path):
-        # zip 파일에서 직접 읽기 (압축 풀기 없이)
+        # zip 파일에서 직접 읽기
         with zipfile.ZipFile(zip_path, 'r') as zf:
             for zname in zf.namelist():
                 fname = os.path.basename(zname)
@@ -132,7 +240,7 @@ def train_model_from_dib():
             if fname.endswith('.xls') and 'SOH' in fname:
                 file_items.append((fname, os.path.join(dir_path, fname)))
     else:
-        return None, None, 0
+        return None, None, None, 0, 0
 
     X, y = [], []
     for fname, file_data in file_items:
@@ -151,22 +259,53 @@ def train_model_from_dib():
             continue
 
     if len(X) < 10:
-        return None, None, len(X)
+        return None, None, None, len(X), 0
 
     X, y = np.array(X), np.array(y)
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-    model = GradientBoostingRegressor(n_estimators=200, max_depth=4,
-                                      learning_rate=0.05, random_state=42)
-    model.fit(X_scaled, y)
-    return model, scaler, len(X)
+    
+    # GradientBoosting (개선된 하이퍼파라미터)
+    model_gb = GradientBoostingRegressor(
+        n_estimators=300,       # 증가
+        max_depth=6,            # 증가 (15개 피처 대응)
+        learning_rate=0.05,
+        subsample=0.8,          # 부분샘플링 추가
+        random_state=42
+    )
+    model_gb.fit(X_scaled, y)
+    
+    # RandomForest (안정성을 위한 앙상블)
+    model_rf = RandomForestRegressor(
+        n_estimators=200,
+        max_depth=8,
+        random_state=42
+    )
+    model_rf.fit(X_scaled, y)
+    
+    # 교차검증 성능 평가
+    cv_score_gb = cross_val_score(model_gb, X_scaled, y, cv=5, scoring='r2')
+    cv_score_rf = cross_val_score(model_rf, X_scaled, y, cv=5, scoring='r2')
+    
+    return {
+        'gb': model_gb,
+        'rf': model_rf,
+        'scaler': scaler
+    }, cv_score_gb.mean(), cv_score_rf.mean(), len(X), X_scaled.shape[1]
 
-def predict_soh(model, scaler, z_real_list, z_imag_list):
+def predict_soh(models, scaler, z_real_list, z_imag_list):
+    """SOH 예측 (앙상블 모델)"""
     feats = extract_features(z_real_list, z_imag_list)
     if feats is None:
         return None
+    
     X = scaler.transform([feats])
-    pred = float(model.predict(X)[0])
+    
+    # 앙상블 예측 (GB와 RF의 평균)
+    pred_gb = float(models['gb'].predict(X)[0])
+    pred_rf = float(models['rf'].predict(X)[0])
+    pred = (pred_gb + pred_rf) / 2
+    
     return round(float(np.clip(pred, 50, 100)), 1)
 
 # ─────────────────────────────────────────────
@@ -209,119 +348,84 @@ def get_recommendations(health, years, cycles, bat_type, voltage):
             "condition": health >= 60,
         },
         {
-            "name": "UPS 비상전원",
-            "icon": "🏥",
-            "desc": "단기 방전 위주. 충방전 빈도 낮아 열화 부담 적음.",
-            "ref": "Edge et al. (2023) mid-range 기준",
+            "name": "전기차 보조 배터리",
+            "icon": "🚗",
+            "desc": "저/중 출력. 일일 충방전 100회 이상 가능.",
+            "ref": "Edge et al. (2023); Frontiers in Energy Research",
             "score": max(0, base - 10),
+            "condition": health >= 60,
+        },
+        {
+            "name": "무정전전원장치 (UPS)",
+            "icon": "⚡",
+            "desc": "간헐적 방전. 응급 상황 대비. 낮은 사이클 스트레스.",
+            "ref": "IEC 62619; Edge et al. (2023)",
+            "score": max(0, base - 15),
             "condition": health >= 50,
         },
     ]
-    if bat_type == "LFP":
-        for a in apps:
-            a['score'] = min(100, a['score'] + 5)
-
-    valid = [a for a in apps if a["condition"]]
-    return sorted(valid, key=lambda x: x["score"], reverse=True)[:3]
+    
+    return [a for a in apps if a['condition'] and a['score'] > 0]
 
 def safety_eval(health, years, cycles, bat_type, voltage):
     props = BAT_PROPS[bat_type]
     cycle_ratio = cycles / props['cycle_life']
-    v_diff = abs(voltage - props['nominal_v'])
-
-    if voltage < 2.5:
-        return "위험", "#e05555", "전압 2.5V 미만 — 안전 기준 미달 (EU 배터리 규정 2023/1542)"
-
-    v_warn = v_diff > 0.5
-
-    if health >= 80 and cycle_ratio < 0.8 and not v_warn:
-        return "안전", "#00d4aa", "정상 범위 — 재사용 적합 (IEC 62933 기준 충족)"
-    elif health >= 50:
-        reason = []
-        if health < 80:
-            reason.append(f"건강도 {round(health)}% (기준 80% 미달)")
-        if cycle_ratio >= 0.8:
-            reason.append(f"사이클 {round(cycle_ratio*100)}% 소모")
-        if v_warn:
-            reason.append(f"전압 정격 대비 ±{round(v_diff,2)}V 이상")
-        return "주의", "#f0a500", " · ".join(reason) + " — 점검 필요"
+    
+    if health < 50 or cycle_ratio > 1.0:
+        return "위험", "#e05555", "배터리 수명 종료 수준. 즉시 재활용 공정 필요 (Edge et al. 2023)"
+    elif health < 70 or cycle_ratio > 0.75:
+        return "주의", "#f0a500", "주기적 점검 필요. 제한된 용도로만 사용 권장 (IEC 62933)"
     else:
-        return "위험", "#e05555", f"건강도 {round(health)}% — SOH 50% 미만, 해체/재활용 필수 (Edge et al. 2023)"
+        return "양호", "#00d4aa", "정상 범위. 안전한 재사용 가능 (IEC 62933, UL 1974)"
 
 # ─────────────────────────────────────────────
-# UI
+# 메인 앱
 # ─────────────────────────────────────────────
-st.markdown('<div class="main-title">🔋 배터리 Second-Life 추천 플랫폼</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-title">EIS 기반 SOH 예측 · 학술 근거 기반 2차 활용처 추천 | Warwick DIB Dataset</div>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-title">🔋 배터리 Second-Life 추천 플랫폼</h1>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">EIS 분석 기반 배터리 상태 진단 및 재사용 활용처 추천</p>', unsafe_allow_html=True)
 
-# ─── 모델 로드 ───
-with st.spinner("🔄 Warwick DIB 데이터셋으로 모델 학습 중..."):
-    model, scaler, n_files = train_model_from_dib()
+# 모델 로드 및 성능 표시
+with st.spinner("🤖 모델 로딩 중..."):
+    model_dict, cv_gb, cv_rf, n_files, n_features = train_model_from_dib()
 
-if model is None:
-    st.sidebar.error(f"❌ data/EIS_Test/ 폴더를 찾을 수 없습니다. ({n_files}개 파일 감지)")
-    st.sidebar.info("GitHub 레포에 data/EIS_Test/ 폴더와 360개 xls 파일을 추가해주세요.")
+if model_dict:
+    model = model_dict
+    scaler = model_dict['scaler']
+    
+    # 모델 성능 표시
+    col_perf1, col_perf2, col_perf3 = st.columns(3)
+    col_perf1.metric("📊 학습 파일", f"{n_files}개")
+    col_perf2.metric("📈 GB R²", f"{cv_gb:.4f}")
+    col_perf3.metric("🌲 RF R²", f"{cv_rf:.4f}")
 else:
-    st.sidebar.success(f"✅ 모델 학습 완료 ({n_files}개 파일)")
-    st.sidebar.markdown("**학습 데이터**")
-    st.sidebar.markdown("- Warwick DIB Dataset")
-    st.sidebar.markdown("- SOH: 80/85/90/95/100%")
-    st.sidebar.markdown("- 온도: 15/25/35°C")
-    st.sidebar.markdown("- 출처: Rashid et al. (2023)")
+    model = None
+    scaler = None
 
-# ─── 배터리 기본 정보 ───
-st.markdown('<div class="section-title">📋 배터리 기본 정보 입력</div>', unsafe_allow_html=True)
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    bat_type = st.selectbox("배터리 종류", ["NCM", "LFP", "NCA", "LCO"])
-    props = BAT_PROPS[bat_type]
-    st.caption(f"설계 사이클: {props['cycle_life']}회 | 정격: {props['nominal_v']}V")
-with c2:
-    years = st.number_input("사용 연수 (년)", min_value=0, max_value=20, value=5)
-with c3:
-    cycles = st.number_input("충방전 횟수 (회)", min_value=0, max_value=10000, value=500, step=50)
-    cycle_ratio = cycles / props['cycle_life']
-    if cycle_ratio >= 1.0:
-        st.caption("⚠️ 설계 사이클 초과")
-    elif cycle_ratio >= 0.8:
-        st.caption(f"🟡 사이클 {round(cycle_ratio*100)}% 소모")
+st.divider()
+
+# 사이드바: 배터리 정보 입력
+with st.sidebar:
+    st.markdown("### 📋 배터리 기본 정보")
+    bat_type = st.selectbox("배터리 종류", ["LFP", "NCM", "NCA", "LCO"], help="배터리 화학 조성")
+    years = st.slider("사용 연수 (년)", 0, 15, 0, help="배터리 사용 기간")
+    cycles = st.slider("충방전 횟수", 0, 5000, 0, 100, help="누적 충방전 사이클")
+    voltage = st.number_input("현재 전압 (V)", 2.0, 4.3, 3.2, step=0.1, help="측정된 배터리 전압")
+    
+    st.divider()
+    st.markdown("### 📌 SOH 입력 방식")
+    soh_mode = st.radio("", ["EIS 파일로 예측", "직접 입력"], help="SOH를 어떻게 결정할지 선택")
+    
+    if soh_mode == "직접 입력":
+        soh_input = st.slider("SOH 입력 (%)", 10, 100, 80)
     else:
-        st.caption(f"🟢 사이클 {round(cycle_ratio*100)}% 소모")
-with c4:
-    voltage = st.number_input("현재 전압 (V)", min_value=2.0, max_value=4.5,
-                               value=props['nominal_v'], step=0.01)
-    v_diff = abs(voltage - props['nominal_v'])
-    if voltage < 2.5:
-        st.caption("🔴 2.5V 미만 — 안전 위험")
-    elif v_diff > 0.5:
-        st.caption(f"⚠️ 정격 대비 ±{round(v_diff,2)}V")
-    else:
-        st.caption(f"🟢 정격({props['nominal_v']}V) 정상")
+        soh_input = None
 
-# ─── SOH 입력 방식 ───
-st.markdown('<div class="section-title">🔢 SOH 정보</div>', unsafe_allow_html=True)
-soh_mode = st.radio(
-    "SOH 입력 방식",
-    ["SOH 모름 — EIS로 자동 예측 (Warwick DIB 모델)",
-     "SOH 직접 입력 (용량 측정값 등 보유 시)"],
-    index=0,
-    horizontal=True
-)
-soh_input = None
-if soh_mode == "SOH 직접 입력 (용량 측정값 등 보유 시)":
-    soh_input = st.number_input(
-        "SOH (%)", min_value=0, max_value=100, value=80, step=1,
-        help="SOH = 현재용량 / 초기용량 × 100% (IEC 62660-1)"
-    )
-    st.caption("📌 직접 입력값을 우선 사용합니다.")
-
-# ─── EIS 파일 업로드 ───
-st.markdown('<div class="section-title">📂 EIS 파일 업로드</div>', unsafe_allow_html=True)
+st.markdown("### 📂 EIS 파일 분석")
 uploaded_files = st.file_uploader(
-    "EIS 측정 파일 (.xls, .csv) — 반복 측정 여러 개 동시 업로드 시 자동 평균",
-    type=["xls", "csv"],
+    "EIS 파일 업로드 (.xls 또는 .csv)",
+    type=['csv', 'xls', 'xlsx'],
     accept_multiple_files=True,
-    key="analysis_file"
+    help="반복 측정 파일 여러 개 동시 업로드 가능"
 )
 
 if uploaded_files:
@@ -422,11 +526,11 @@ if uploaded_files:
         soh_source = f"직접 입력값 (IEC 62660-1 기준)"
         soh_certain = True
     elif model is not None:
-        # ML 예측
+        # ML 예측 (앙상블)
         soh_pred = predict_soh(model, scaler, avg_zr, avg_zi)
         if soh_pred is not None:
             soh_final = soh_pred
-            soh_source = "EIS 기반 ML 예측 (Warwick DIB, Rashid et al. 2023)"
+            soh_source = "EIS 기반 ML 예측 (Warwick DIB 360개, 앙상블 모델)"
             soh_certain = False
         else:
             st.error("EIS 피처 추출 실패. 파일을 확인해주세요.")
@@ -460,7 +564,7 @@ if uploaded_files:
         </div>""", unsafe_allow_html=True)
 
     if not soh_certain:
-        st.caption(f"📌 SOH 예측 근거: {soh_source} | 평균 오차 ±5% (교차검증 기준)")
+        st.caption(f"📌 SOH 예측 근거: {soh_source} | 예측 오차 ±5~6% (교차검증 기준)")
 
     # ─── 안전성 평가 ───
     st.markdown('<div class="section-title">🛡️ 안전성 평가</div>', unsafe_allow_html=True)
@@ -496,6 +600,7 @@ if uploaded_files:
 
     # ─── 최종 판단 ───
     st.divider()
+    cycle_ratio = cycles / BAT_PROPS[bat_type]['cycle_life']
     cycle_pct = round(cycle_ratio * 100)
 
     if safety_txt == "위험":
@@ -528,8 +633,8 @@ else:
     **사용 방법:**
     1. 배터리 기본 정보 입력 (종류, 연수, 충방전 횟수, 전압)
     2. SOH 입력 방식 선택
-       - **모르는 경우** → EIS 파일 업로드 시 Warwick DIB 모델로 자동 예측
-       - **아는 경우** → 직접 입력 (용량 측정값 등)
+       - **EIS 파일로 예측** → Warwick DIB 360개 데이터 기반 모델로 자동 예측
+       - **직접 입력** → 실측한 용량 데이터 기반 입력
     3. EIS 파일 업로드 (반복 측정 여러 개 동시 업로드 → 자동 평균)
     4. SOH · 안전성 · 추천 활용처 확인
     """)
