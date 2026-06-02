@@ -114,7 +114,7 @@ def train_model_from_dib():
     import zipfile, tempfile
 
     base_dir  = os.path.dirname(__file__)
-    zip_path  = os.path.join(base_dir, 'data', 'EIS_Test.zip')
+    zip_path  = os.path.join(base_dir, 'EIS_Test.zip')
     dir_path  = os.path.join(base_dir, 'data', 'EIS_Test')
 
     # xls 파일 목록 수집
