@@ -54,8 +54,13 @@ BAT_PROPS = {
 # ─────────────────────────────────────────────
 def parse_xls_eis(file_input):
     """
-    xls 파일에서 EIS 임피던스 데이터 추출 (개선됨)
-    xlrd 라이브러리 사용 + 정확한 파싱
+    xls 파일에서 EIS 임피던스 데이터 추출 (수정됨)
+    
+    컬럼 구조:
+    A: 주파수 (Frequency, Hz)
+    B: Z' (실수부, Ω)
+    C: Z'' (허수부, Ω)
+    
     file_input: 파일 경로(str) 또는 바이트(bytes)
     반환: z_real, z_imag 리스트
     """
@@ -75,59 +80,40 @@ def parse_xls_eis(file_input):
             wb = xlrd.open_workbook(file_input)
         
         ws = wb.sheet_by_index(0)
+        
+        freq_list = []
         z_real_list = []
         z_imag_list = []
         
-        # 헤더 행 찾기 (보통 0-3행)
-        header_row = 0
-        for row in range(min(5, ws.nrows)):
-            row_vals = [str(ws.cell_value(row, col)).lower() for col in range(ws.ncols)]
-            if any('freq' in v or 'impedance' in v or "z'" in v for v in row_vals):
-                header_row = row + 1
-                break
-        
-        # 데이터 추출
-        for row in range(header_row, ws.nrows):
+        # 데이터 추출 (행 1부터 시작 - 헤더 없음)
+        for row in range(ws.nrows):
             try:
                 if ws.ncols >= 3:
-                    freq = float(ws.cell_value(row, 0))
-                    zr = float(ws.cell_value(row, 1))
-                    zi = float(ws.cell_value(row, 2))
+                    freq = float(ws.cell_value(row, 0))  # A: 주파수
+                    zr = float(ws.cell_value(row, 1))    # B: Z'
+                    zi = float(ws.cell_value(row, 2))    # C: Z''
                     
-                    # 배터리 표준 범위 검증
-                    if (freq > 0 and 
-                        0.001 <= abs(zr) <= 100 and 
-                        -100 <= zi <= 0.1):
+                    # 유효성 검사
+                    if freq > 0:  # 주파수는 양수
+                        freq_list.append(freq)
                         z_real_list.append(zr)
                         z_imag_list.append(zi)
             except:
                 continue
         
         if z_real_list:
-            # 고주파 → 저주파 순서로 정렬
-            sorted_idx = np.argsort(z_real_list)[::-1]
+            # 주파수순 정렬 (고주파 → 저주파)
+            sorted_idx = np.argsort(freq_list)[::-1]
             z_real = [z_real_list[i] for i in sorted_idx]
             z_imag = [z_imag_list[i] for i in sorted_idx]
             return z_real, z_imag
     
     except ImportError:
         st.warning("⚠️ xlrd 설치 필요: pip install xlrd>=2.0.1")
-    except:
-        pass
+    except Exception as e:
+        print(f"XLS 파싱 오류: {e}")
     
-    # 폴백: 원래 방식 사용
-    all_floats = []
-    for i in range(0, len(raw) - 8, 8):
-        try:
-            v = struct.unpack_from('<d', raw, i)[0]
-            if not (v != v) and abs(v) < 1e10:
-                all_floats.append(v)
-        except:
-            pass
-
-    z_real = sorted([v for v in all_floats if 0.001 <= v <= 10], reverse=True)
-    z_imag_neg = sorted([v for v in all_floats if -1 <= v < -0.0001])
-    return z_real, z_imag_neg
+    return [], []
 
 def parse_csv_eis(file_input):
     """csv 파일에서 EIS 데이터 추출 (freq, z_real, z_imag 3열)"""
@@ -256,6 +242,8 @@ def train_model_from_dib():
         return None, None, None, 0, 0
 
     X, y = [], []
+    debug_info = []  # 디버그 정보 저장
+    
     for fname, file_data in file_items:
         m = re.search(r'(\d+)SOH', fname)
         if not m:
@@ -268,6 +256,18 @@ def train_model_from_dib():
             if feats:
                 X.append(feats)
                 y.append(soh)
+                
+                # 처음 몇 개 파일 정보 저장
+                if len(debug_info) < 5:
+                    Rct = feats[1]  # 반원 직경
+                    avg_zr = feats[4]  # 평균 Z'
+                    debug_info.append({
+                        'file': fname,
+                        'soh': soh,
+                        'avg_zr': avg_zr,
+                        'Rct': Rct,
+                        'z_points': len(zr)
+                    })
         except:
             continue
 
@@ -277,6 +277,22 @@ def train_model_from_dib():
     X, y = np.array(X), np.array(y)
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
+    
+    # 디버그 정보 출력 (처음 5개 파일)
+    print("\n" + "="*70)
+    print("📊 EIS 데이터 로드 검증")
+    print("="*70)
+    for info in debug_info:
+        print(f"파일: {info['file']}")
+        print(f"  SOH: {info['soh']}%")
+        print(f"  평균 Z' (Re): {info['avg_zr']:.6f} Ω")
+        print(f"  Rct (반원 직경): {info['Rct']:.6f} Ω")
+        print(f"  데이터 포인트: {info['z_points']}개")
+    print("="*70)
+    print(f"✅ 총 로드된 파일: {len(X)}개")
+    print(f"✅ SOH 범위: {int(np.min(y))}% ~ {int(np.max(y))}%")
+    print(f"✅ 피처 수: {X_scaled.shape[1]}개")
+    print("="*70 + "\n")
     
     # GradientBoosting (개선된 하이퍼파라미터)
     model_gb = GradientBoostingRegressor(
