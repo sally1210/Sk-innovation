@@ -20,17 +20,17 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .main-title  { font-size:28px; font-weight:700; margin-bottom:4px; color:#1a1a1a; }
-    .sub-title   { font-size:14px; color:#333333; margin-bottom:24px; }
-    .metric-card { background:#f0f0f0; border-radius:12px; padding:20px;
-                   text-align:center; border:2px solid #333333; }
-    .metric-val  { font-size:28px; font-weight:700; color:#1a1a1a; }
-    .metric-label{ font-size:13px; color:#333333; margin-top:4px; }
-    .rec-card    { background:#f5f5f5 !important; border-radius:12px; padding:16px 20px;
-                   margin-bottom:10px; border:2px solid #333333; }
-    .top-card    { border:3px solid #00a86b !important; background:#f5f5f5 !important; }
-    .section-title { font-size:18px; font-weight:600; margin:20px 0 12px; color:#1a1a1a; }
-    .ref-text    { font-size:11px; color:#333333; margin-top:4px; }
+    .main-title  { font-size:28px; font-weight:700; margin-bottom:4px; color:#FFFF00; }
+    .sub-title   { font-size:14px; color:#FFFF99; margin-bottom:24px; }
+    .metric-card { background:#0a0a0a; border-radius:12px; padding:20px;
+                   text-align:center; border:1px solid #333333; }
+    .metric-val  { font-size:28px; font-weight:700; color:#00FF88; }
+    .metric-label{ font-size:13px; color:#FFFFFF; margin-top:4px; }
+    .rec-card    { background:#0a0a0a !important; border-radius:12px; padding:16px 20px;
+                   margin-bottom:10px; border:1px solid #333333; }
+    .top-card    { border:2px solid #00FF88 !important; background:#0a0a0a !important; }
+    .section-title { font-size:18px; font-weight:600; margin:20px 0 12px; color:#FFFF00; }
+    .ref-text    { font-size:11px; color:#CCCCCC; margin-top:4px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -689,10 +689,10 @@ if uploaded_files:
             <div class="{card_class}">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px;">
                     <div style="flex:1;">
-                        <div style="font-size:18px; font-weight:900; color:#000000; margin-bottom:8px;">{rec['icon']} {rec['name']}</div>
-                        <div style="font-size:13px; color:#000000; margin-bottom:8px; font-weight:700;">{rank_label} · 적합도 {round(rec['score'])}점</div>
-                        <div style="font-size:14px; color:#222222; margin-bottom:6px; line-height:1.6;">{rec['desc']}</div>
-                        <div style="font-size:12px; color:#333333;">📚 {rec['ref']}</div>
+                        <div style="font-size:18px; font-weight:900; color:#FFFFFF; margin-bottom:8px;">{rec['icon']} {rec['name']}</div>
+                        <div style="font-size:13px; color:#00FF88; margin-bottom:8px; font-weight:700;">{rank_label} · 적합도 {round(rec['score'])}점</div>
+                        <div style="font-size:14px; color:#DDDDDD; margin-bottom:6px; line-height:1.6;">{rec['desc']}</div>
+                        <div style="font-size:12px; color:#AAAAAA;">📚 {rec['ref']}</div>
                     </div>
                 </div>
             </div>""", unsafe_allow_html=True)
