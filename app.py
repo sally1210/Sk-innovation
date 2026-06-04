@@ -62,6 +62,26 @@ PENALTY_WEIGHTS = {
 }
 
 # ─────────────────────────────────────────────
+# 학술 근거 기반 배터리 특성값
+# [1] SOH 기준: Edge et al. (2023), doi:10.5281/zenodo.10257443
+#     - 재사용: SOH > 80%
+#     - 재활용: 50% < SOH < 80%
+#     - 해체: SOH < 50%
+# [2] 사이클 수명 (100% → 80%): All et al. (2023), Section 2, p.2
+#     - LFP: 4,000회 이상
+#     - NMC: 2,000회
+#     - NCA: 1,500회
+# [3] LFP 캘린더 열화: 1%/년 미만 (All et al. 2023, Section 3)
+# [4] ESS 기준: IEC 62933, UL 1974
+# ─────────────────────────────────────────────
+BAT_PROPS = {
+    "NCM": dict(soh_reuse=80, soh_recycle=50, cycle_life=2000, nominal_v=3.6),
+    "LFP": dict(soh_reuse=80, soh_recycle=50, cycle_life=4000, nominal_v=3.2),
+    "NCA": dict(soh_reuse=80, soh_recycle=50, cycle_life=1500, nominal_v=3.6),
+    "LCO": dict(soh_reuse=80, soh_recycle=50, cycle_life=1000, nominal_v=3.7),
+}
+
+# ─────────────────────────────────────────────
 # XLS 파일 파싱 (개선됨 - xlrd 라이브러리 사용)
 # Warwick DIB xls 포맷 기준
 # ─────────────────────────────────────────────
