@@ -20,17 +20,17 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .main-title  { font-size:28px; font-weight:700; margin-bottom:4px; }
-    .sub-title   { font-size:14px; color:#888; margin-bottom:24px; }
-    .metric-card { background:#1a1a2e; border-radius:12px; padding:20px;
-                   text-align:center; border:1px solid #2a2a4a; }
-    .metric-val  { font-size:28px; font-weight:700; color:#00d4aa; }
-    .metric-label{ font-size:12px; color:#aaa; margin-top:4px; }
-    .rec-card    { background:#1a1a2e; border-radius:12px; padding:16px 20px;
-                   margin-bottom:10px; border:1px solid #2a2a4a; }
-    .top-card    { border:2px solid #00d4aa !important; }
-    .section-title { font-size:18px; font-weight:600; margin:20px 0 12px; }
-    .ref-text    { font-size:11px; color:#666; margin-top:4px; }
+    .main-title  { font-size:28px; font-weight:700; margin-bottom:4px; color:#ffffff; }
+    .sub-title   { font-size:14px; color:#cccccc; margin-bottom:24px; }
+    .metric-card { background:#1a1f35; border-radius:12px; padding:20px;
+                   text-align:center; border:1px solid #3a3f55; }
+    .metric-val  { font-size:28px; font-weight:700; color:#00ff88; }
+    .metric-label{ font-size:12px; color:#dddddd; margin-top:4px; }
+    .rec-card    { background:#1a1f35 !important; border-radius:12px; padding:16px 20px;
+                   margin-bottom:10px; border:1px solid #3a3f55; }
+    .top-card    { border:2px solid #00ff88 !important; background:#1a1f35 !important; }
+    .section-title { font-size:18px; font-weight:600; margin:20px 0 12px; color:#ffffff; }
+    .ref-text    { font-size:11px; color:#aaaaaa; margin-top:4px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -686,13 +686,13 @@ if uploaded_files:
             card_class = "rec-card top-card" if i == 0 else "rec-card"
             rank_label = "✦ 최우선 추천" if i == 0 else f"{i+1}순위 추천"
             st.markdown(f"""
-            <div class="{card_class}">
-                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-                    <div>
-                        <div style="font-size:16px; font-weight:600;">{rec['icon']} {rec['name']}</div>
-                        <div style="font-size:12px; color:#aaa;">{rank_label} · 적합도 {round(rec['score'])}점</div>
-                        <div style="font-size:13px; color:#bbb; margin-top:6px;">{rec['desc']}</div>
-                        <div style="font-size:11px; color:#666; margin-top:4px;">📚 {rec['ref']}</div>
+            <div class="{card_class}" style="background:#1a1f35 !important; padding:16px 20px !important;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px;">
+                    <div style="flex:1;">
+                        <div style="font-size:18px; font-weight:700; color:#ffffff !important; margin-bottom:8px;">{rec['icon']} {rec['name']}</div>
+                        <div style="font-size:13px; color:#00ff88 !important; margin-bottom:8px; font-weight:500;">{rank_label} · 적합도 {round(rec['score'])}점</div>
+                        <div style="font-size:13px; color:#e0e0e0 !important; margin-bottom:6px; line-height:1.5;">{rec['desc']}</div>
+                        <div style="font-size:12px; color:#b0b0b0 !important;">📚 {rec['ref']}</div>
                     </div>
                 </div>
             </div>""", unsafe_allow_html=True)
