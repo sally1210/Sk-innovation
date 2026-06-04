@@ -20,8 +20,8 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .main-title  { font-size:28px; font-weight:700; margin-bottom:4px; color:#FFFF00; }
-    .sub-title   { font-size:14px; color:#FFFF99; margin-bottom:24px; }
+    .main-title  { font-size:28px; font-weight:700; margin-bottom:4px; color:#000000; }
+    .sub-title   { font-size:14px; color:#000000; margin-bottom:24px; }
     .metric-card { background:#0a0a0a; border-radius:12px; padding:20px;
                    text-align:center; border:1px solid #333333; }
     .metric-val  { font-size:28px; font-weight:700; color:#00FF88; }
@@ -29,7 +29,7 @@ st.markdown("""
     .rec-card    { background:#0a0a0a !important; border-radius:12px; padding:16px 20px;
                    margin-bottom:10px; border:1px solid #333333; }
     .top-card    { border:2px solid #00FF88 !important; background:#0a0a0a !important; }
-    .section-title { font-size:18px; font-weight:600; margin:20px 0 12px; color:#FFFF00; }
+    .section-title { font-size:18px; font-weight:600; margin:20px 0 12px; color:#000000; }
     .ref-text    { font-size:11px; color:#CCCCCC; margin-top:4px; }
 </style>
 """, unsafe_allow_html=True)
