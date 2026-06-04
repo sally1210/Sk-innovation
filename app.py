@@ -447,7 +447,11 @@ def get_recommendations(health, years, cycles, bat_type, voltage):
         },
     ]
     
-    return [a for a in apps if a['condition'] and a['score'] > 0], adjusted_health, weights['desc']
+    # 적합도(score)가 높은 순서대로 정렬
+    recs_filtered = [a for a in apps if a['condition'] and a['score'] > 0]
+    recs_sorted = sorted(recs_filtered, key=lambda x: x['score'], reverse=True)
+    
+    return recs_sorted, adjusted_health, weights['desc']
 
 def safety_eval(health, years, cycles, bat_type, voltage):
     """
