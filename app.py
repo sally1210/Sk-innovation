@@ -661,45 +661,50 @@ if uploaded_files:
     if not soh_certain:
         st.caption(f"📌 SOH 예측 근거: {soh_source} | 예측 오차 ±5~6% (교차검증 기준)")
 
-    # ─── 추천 활용처 (먼저 호출해서 adjusted_health 얻음) ───
-    st.markdown('<div class="section-title">🎯 추천 활용처</div>', unsafe_allow_html=True)
-    st.caption("📌 활용처별 기준: 조정된 SOH (배터리별 차등 페널티 포함)")
-
+    # ─── 1단계: 조정된 SOH 계산 및 안전성 평가 ───
     recs, adjusted_health, battery_desc = get_recommendations(soh_final, years, cycles, bat_type, voltage)
+    safety_txt, safety_color, safety_desc = safety_eval(adjusted_health, years, cycles, bat_type, voltage)
     
-    # 조정된 SOH 상세 표시
+    # ─── 2단계: 조정된 SOH 상세 표시 ───
+    st.markdown('<div class="section-title">📊 조정된 SOH 분석</div>', unsafe_allow_html=True)
     adjustment_pct = soh_final - adjusted_health
     if adjustment_pct > 0.1:
-        st.info(f"📊 **{battery_desc}**\n"
+        st.info(f"**{battery_desc}**\n"
                 f"기본 SOH: {soh_final:.1f}% → 조정된 SOH: **{adjusted_health:.1f}%**\n"
                 f"*(사이클 {cycles}회, 연수 {years}년, 전압 {voltage}V 고려, 페널티: -{adjustment_pct:.1f}%)*")
     
-    # ─── 안전성 평가 (adjusted_health 기준으로 통일) ───
+    # ─── 3단계: 안전성 평가 ───
     st.markdown('<div class="section-title">🛡️ 안전성 평가</div>', unsafe_allow_html=True)
-    safety_txt, safety_color, safety_desc = safety_eval(adjusted_health, years, cycles, bat_type, voltage)
     st.markdown(f"""
     <div class="metric-card" style="text-align:left; border:2px solid {safety_color};">
         <span style="font-size:20px; font-weight:700; color:{safety_color}">{safety_txt}</span>
         <span style="font-size:14px; color:#ccc; margin-left:12px;">{safety_desc}</span>
     </div>""", unsafe_allow_html=True)
-    
-    if not recs:
-        st.error("❌ 모든 활용처 기준 미달 — 재활용 공정 투입 권장 (조정 SOH 50% 미만)")
+
+    # ─── 4단계: 추천 활용처 (안전성이 "위험"이면 표시 안 함) ───
+    if safety_txt == "위험":
+        st.error("❌ **위험 상태** — 2차 활용처 불가\n\n해체 필요. 배터리를 즉시 재활용 공정에 투입하세요.")
     else:
-        for i, rec in enumerate(recs):
-            card_class = "rec-card top-card" if i == 0 else "rec-card"
-            rank_label = "✦ 최우선 추천" if i == 0 else f"{i+1}순위 추천"
-            st.markdown(f"""
-            <div class="{card_class}">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px;">
-                    <div style="flex:1;">
-                        <div style="font-size:18px; font-weight:900; color:#FFFFFF; margin-bottom:8px;">{rec['icon']} {rec['name']}</div>
-                        <div style="font-size:13px; color:#00FF88; margin-bottom:8px; font-weight:700;">{rank_label} · 적합도 {round(rec['score'])}점</div>
-                        <div style="font-size:14px; color:#DDDDDD; margin-bottom:6px; line-height:1.6;">{rec['desc']}</div>
-                        <div style="font-size:12px; color:#AAAAAA;">📚 {rec['ref']}</div>
+        st.markdown('<div class="section-title">🎯 추천 활용처</div>', unsafe_allow_html=True)
+        st.caption("📌 활용처별 기준: 조정된 SOH (배터리별 차등 페널티 포함)")
+
+        if not recs:
+            st.error("❌ 모든 활용처 기준 미달 — 재활용 공정 투입 권장 (조정 SOH 50% 미만)")
+        else:
+            for i, rec in enumerate(recs):
+                card_class = "rec-card top-card" if i == 0 else "rec-card"
+                rank_label = "✦ 최우선 추천" if i == 0 else f"{i+1}순위 추천"
+                st.markdown(f"""
+                <div class="{card_class}">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px;">
+                        <div style="flex:1;">
+                            <div style="font-size:18px; font-weight:900; color:#FFFFFF; margin-bottom:8px;">{rec['icon']} {rec['name']}</div>
+                            <div style="font-size:13px; color:#00FF88; margin-bottom:8px; font-weight:700;">{rank_label} · 적합도 {round(rec['score'])}점</div>
+                            <div style="font-size:14px; color:#DDDDDD; margin-bottom:6px; line-height:1.6;">{rec['desc']}</div>
+                            <div style="font-size:12px; color:#AAAAAA;">📚 {rec['ref']}</div>
+                        </div>
                     </div>
-                </div>
-            </div>""", unsafe_allow_html=True)
+                </div>""", unsafe_allow_html=True)
 
     # ─── 최종 판단 ───
     st.divider()
