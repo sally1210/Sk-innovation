@@ -35,23 +35,30 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# 학술 근거 기반 배터리 특성값
-# [1] SOH 기준: Edge et al. (2023), doi:10.5281/zenodo.10257443
-#     - 재사용: SOH > 80%
-#     - 재활용: 50% < SOH < 80%
-#     - 해체: SOH < 50%
-# [2] 사이클 수명 (100% → 80%): All et al. (2023), Section 2, p.2
-#     - LFP: 4,000회 이상
-#     - NMC: 2,000회
-#     - NCA: 1,500회
-# [3] LFP 캘린더 열화: 1%/년 미만 (All et al. 2023, Section 3)
-# [4] ESS 기준: IEC 62933, UL 1974
+# 배터리별 페널티 가중치
+# 배터리 특성에 따른 열화 속도 차이 반영
 # ─────────────────────────────────────────────
-BAT_PROPS = {
-    "NCM": dict(soh_reuse=80, soh_recycle=50, cycle_life=2000, nominal_v=3.6),
-    "LFP": dict(soh_reuse=80, soh_recycle=50, cycle_life=4000, nominal_v=3.2),
-    "NCA": dict(soh_reuse=80, soh_recycle=50, cycle_life=1500, nominal_v=3.6),
-    "LCO": dict(soh_reuse=80, soh_recycle=50, cycle_life=1000, nominal_v=3.7),  # 추정값
+PENALTY_WEIGHTS = {
+    "LFP": {
+        "cycle_multiplier": 15,   # 사이클 페널티: 사이클비율 × 15%
+        "age_multiplier": 1.0,     # 연 페널티: 1% per year
+        "desc": "안정적 화학 (LiFePO₄)"
+    },
+    "NCM": {
+        "cycle_multiplier": 20,
+        "age_multiplier": 2.0,
+        "desc": "표준 니켈-코발트-망간"
+    },
+    "NCA": {
+        "cycle_multiplier": 22,
+        "age_multiplier": 2.5,
+        "desc": "고에너지 니켈-코발트-알루미늄"
+    },
+    "LCO": {
+        "cycle_multiplier": 25,
+        "age_multiplier": 3.0,
+        "desc": "고에너지 리튬-코발트 (불안정)"
+    }
 }
 
 # ─────────────────────────────────────────────
@@ -350,20 +357,32 @@ def predict_soh(models, scaler, z_real_list, z_imag_list):
 # ─────────────────────────────────────────────
 def get_recommendations(health, years, cycles, bat_type, voltage):
     """
-    배터리 2차 수명 활용처 추천
+    배터리 2차 수명 활용처 추천 (배터리별 차등 가중치 적용)
     
-    기준 출처:
-    [1] Edge et al. (2023): ESS/UPS/통신 기지국 SOH 기준
-    [2] IEC 62933: 에너지 저장 시스템 표준
-    [3] Martinez-Laserna et al. (2018): LFP 2차 수명 분석
+    조정된 SOH = 기본 SOH - 사이클 페널티 - 연수 페널티 - 전압 페널티
+    
+    페널티는 배터리 화학 특성에 따라 차등 적용:
+    - LFP: 안정적 (사이클 15%, 연 1%)
+    - NMC: 표준 (사이클 20%, 연 2%)
+    - NCA: 불안정 (사이클 22%, 연 2.5%)
+    - LCO: 매우 불안정 (사이클 25%, 연 3%)
+    
+    근거: All et al. (2023) 사이클 수명, Edge et al. (2023) 재사용/재활용
     """
     props = BAT_PROPS[bat_type]
-    cycle_ratio  = cycles / props['cycle_life']
-    cycle_penalty = cycle_ratio * 20
-    age_penalty   = years * 2
-    v_diff        = abs(voltage - props['nominal_v'])
-    v_penalty     = v_diff * 10 if v_diff > 0.3 else 0
-    base = health - cycle_penalty - age_penalty - v_penalty
+    weights = PENALTY_WEIGHTS[bat_type]
+    
+    # 1단계: 배터리별 차등 페널티 계산
+    cycle_ratio = cycles / props['cycle_life']
+    cycle_penalty = min(cycle_ratio * weights['cycle_multiplier'], 25)  # 최대 25%
+    
+    age_penalty = min(years * weights['age_multiplier'], 20)  # 최대 20%
+    
+    v_diff = abs(voltage - props['nominal_v'])
+    v_penalty = min((v_diff / 0.3) * 10, 10) if v_diff > 0 else 0  # 최대 10%
+    
+    # 2단계: 조정된 SOH 계산
+    adjusted_health = health - cycle_penalty - age_penalty - v_penalty
 
     apps = [
         {
@@ -371,44 +390,44 @@ def get_recommendations(health, years, cycles, bat_type, voltage):
             "icon": "🔋",
             "desc": "태양광/풍력 연계. 일일 1~2회 충방전. 5~10년 운영 기대.",
             "ref": "Edge et al. (2023); IEC 62933",
-            "score": max(0, base + 10),
-            "condition": health >= 70,
+            "score": max(0, adjusted_health - 10),
+            "condition": adjusted_health >= 70,
         },
         {
             "name": "태양광 주택용 ESS",
             "icon": "☀️",
             "desc": "가정용 태양광 연계 저장. 낮은 C-rate, 25년 설계수명.",
             "ref": "Edge et al. (2023); IEC 62933",
-            "score": max(0, base + 5),
-            "condition": health >= 70,
+            "score": max(0, adjusted_health - 5),
+            "condition": adjusted_health >= 70,
         },
         {
             "name": "무정전전원장치 (UPS)",
             "icon": "⚡",
             "desc": "비상/백업 전원. 간헐적 방전. 낮은 사이클 스트레스.",
             "ref": "Edge et al. (2023), PMC11033388",
-            "score": max(0, base - 5),
-            "condition": health >= 50,  # UPS: 50% 이상
+            "score": max(0, adjusted_health),
+            "condition": adjusted_health >= 50,
         },
         {
             "name": "통신기지국 백업전원",
             "icon": "📡",
             "desc": "기지국 정전 대비. 부동충전 위주, 연간 수회 방전.",
-            "ref": "Martinez-Laserna et al. (2018)",
-            "score": max(0, base - 10),
-            "condition": health >= 50,
+            "ref": "EverExceed (업계표준); All et al. (2023)",
+            "score": max(0, adjusted_health - 15),
+            "condition": adjusted_health >= 50,
         },
         {
             "name": "전기차 보조 배터리",
             "icon": "🚗",
             "desc": "저출력 범위. 일일 충방전 100회 이상 가능.",
-            "ref": "Edge et al. (2023)",
-            "score": max(0, base - 15),
-            "condition": health >= 50,
+            "ref": "Circunomics; Frontiers Chemistry",
+            "score": max(0, adjusted_health - 20),
+            "condition": adjusted_health >= 50,
         },
     ]
     
-    return [a for a in apps if a['condition'] and a['score'] > 0]
+    return [a for a in apps if a['condition'] and a['score'] > 0], adjusted_health, weights['desc']
 
 def safety_eval(health, years, cycles, bat_type, voltage):
     """
@@ -629,11 +648,19 @@ if uploaded_files:
 
     # ─── 추천 활용처 ───
     st.markdown('<div class="section-title">🎯 추천 활용처</div>', unsafe_allow_html=True)
-    st.caption("📌 활용처별 SOH 기준 — Edge et al. (2023); Martinez-Laserna et al. (2018); IEC 62933")
+    st.caption("📌 활용처별 기준: 조정된 SOH (배터리별 차등 페널티 포함)")
 
-    recs = get_recommendations(soh_final, years, cycles, bat_type, voltage)
+    recs, adjusted_health, battery_desc = get_recommendations(soh_final, years, cycles, bat_type, voltage)
+    
+    # 조정된 SOH 상세 표시
+    adjustment_pct = soh_final - adjusted_health
+    if adjustment_pct > 0.1:
+        st.info(f"📊 **{battery_desc}**\n"
+                f"기본 SOH: {soh_final:.1f}% → 조정된 SOH: **{adjusted_health:.1f}%**\n"
+                f"*(사이클 {cycles}회, 연수 {years}년, 전압 {voltage}V 고려, 페널티: -{adjustment_pct:.1f}%)*")
+    
     if not recs:
-        st.error("❌ 모든 활용처 기준 미달 — 재활용 공정 투입 권장 (SOH 50% 미만, Edge et al. 2023)")
+        st.error("❌ 모든 활용처 기준 미달 — 재활용 공정 투입 권장 (조정 SOH 50% 미만)")
     else:
         for i, rec in enumerate(recs):
             card_class = "rec-card top-card" if i == 0 else "rec-card"
