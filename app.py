@@ -661,16 +661,7 @@ if uploaded_files:
     if not soh_certain:
         st.caption(f"📌 SOH 예측 근거: {soh_source} | 예측 오차 ±5~6% (교차검증 기준)")
 
-    # ─── 안전성 평가 ───
-    st.markdown('<div class="section-title">🛡️ 안전성 평가</div>', unsafe_allow_html=True)
-    safety_txt, safety_color, safety_desc = safety_eval(soh_final, years, cycles, bat_type, voltage)
-    st.markdown(f"""
-    <div class="metric-card" style="text-align:left; border:2px solid {safety_color};">
-        <span style="font-size:20px; font-weight:700; color:{safety_color}">{safety_txt}</span>
-        <span style="font-size:14px; color:#ccc; margin-left:12px;">{safety_desc}</span>
-    </div>""", unsafe_allow_html=True)
-
-    # ─── 추천 활용처 ───
+    # ─── 추천 활용처 (먼저 호출해서 adjusted_health 얻음) ───
     st.markdown('<div class="section-title">🎯 추천 활용처</div>', unsafe_allow_html=True)
     st.caption("📌 활용처별 기준: 조정된 SOH (배터리별 차등 페널티 포함)")
 
@@ -682,6 +673,15 @@ if uploaded_files:
         st.info(f"📊 **{battery_desc}**\n"
                 f"기본 SOH: {soh_final:.1f}% → 조정된 SOH: **{adjusted_health:.1f}%**\n"
                 f"*(사이클 {cycles}회, 연수 {years}년, 전압 {voltage}V 고려, 페널티: -{adjustment_pct:.1f}%)*")
+    
+    # ─── 안전성 평가 (adjusted_health 기준으로 통일) ───
+    st.markdown('<div class="section-title">🛡️ 안전성 평가</div>', unsafe_allow_html=True)
+    safety_txt, safety_color, safety_desc = safety_eval(adjusted_health, years, cycles, bat_type, voltage)
+    st.markdown(f"""
+    <div class="metric-card" style="text-align:left; border:2px solid {safety_color};">
+        <span style="font-size:20px; font-weight:700; color:{safety_color}">{safety_txt}</span>
+        <span style="font-size:14px; color:#ccc; margin-left:12px;">{safety_desc}</span>
+    </div>""", unsafe_allow_html=True)
     
     if not recs:
         st.error("❌ 모든 활용처 기준 미달 — 재활용 공정 투입 권장 (조정 SOH 50% 미만)")
